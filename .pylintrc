@@ -1,0 +1,8 @@
+[MESSAGES CONTROL]
+disable=C0114, no-member, bare-except, missing-public-methods, 
+        too-few-public-methods, too-many-locals, broad-exception-caught, 
+        too-many-ancestors, W0223,
+        unused-argument, no-self-use, too-many-arguments
+
+[MASTER]
+ignore=migrations,tests

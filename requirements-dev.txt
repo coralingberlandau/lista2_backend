@@ -1,0 +1,8 @@
+# Extra tools for working on the code (not needed to run or deploy the app).
+# Install with:  pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Static analysis and automatic PEP8 formatting
+pylint==3.3.1
+pylint-django==2.6.1
+autopep8==2.3.1
