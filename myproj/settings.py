@@ -167,6 +167,13 @@ STATICFILES_DIRS = [
 MEDIA_ROOT = BASE_DIR / 'static/images'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# Pictures are sent by the app as text inside a form field (base64, about a third bigger than
+# the file). Django's default limit for such fields is 2.5 MB, which refused many phone photos
+# (nothing was saved). Pictures are meant to be shrunk by the app before sending, so this limit
+# only has to be comfortably above the size of a shrunken picture. Uploads above it get a clear
+# "too large" message (see upload_images in lista/views.py).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
