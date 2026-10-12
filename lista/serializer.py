@@ -54,10 +54,13 @@ class ListItemSerializer(serializers.ModelSerializer):
     Fields:
     - user: The user who owns the list item (required).
     - images: Associated images for the list item (optional).
+    - items: The list content. May be empty, so a list can be created with a title first
+      and filled in later (the title is still required).
 
     extra_kwargs:
     - user: The user field is required.
     - images: The images field is optional.
+    - items: An empty value is allowed.
     """
     class Meta:
         """
@@ -68,6 +71,7 @@ class ListItemSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'user': {'required': True},
             'images': {'required': False},
+            'items': {'allow_blank': True},
         }
 
 

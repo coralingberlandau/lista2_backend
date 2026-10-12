@@ -29,7 +29,7 @@ from django.utils import timezone
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
-from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.exceptions import PermissionDenied, RequestDataTooBig, ValidationError
 from django.contrib.auth.password_validation import validate_password
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -713,9 +713,16 @@ class ListItemImageViewSet(viewsets.ModelViewSet):
         - HTTP 201 Created with a success message if the upload is successful.
         - HTTP 400 Bad Request if the list_item or images array is missing, 
           or if the base64 decoding fails.
+        - HTTP 413 Request Entity Too Large (with a clear message) if the upload is
+          over the size limit (DATA_UPLOAD_MAX_MEMORY_SIZE); nothing is saved.
         """
-        list_item_id = request.data.get('list_item')
-        images_data = request.data.getlist('images')
+        try:
+            list_item_id = request.data.get('list_item')
+            images_data = request.data.getlist('images')
+        except RequestDataTooBig:
+            return Response(
+                {"error": "The picture is too large. Choose a smaller picture and try again."},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
         if not list_item_id:
             return Response({"error": "list_item is required."}, status=status.HTTP_400_BAD_REQUEST)

@@ -239,6 +239,25 @@ class ListTests(ApiTestCase):
         home = self.owner.get(f"/grouplists/by-user/{self.owner_data['user_id']}/").json()
         self.assertEqual((home[0]['title'], home[0]['items']), ('Weekend', '✔️ Milk|Bread'))
 
+    def test_list_with_a_title_and_no_items_can_be_saved(self):
+        # Creating the list first and filling it in later is allowed (the title stays required).
+        list_id = self.make_list(title='Trip ideas', items='')
+        home = self.owner.get(f"/grouplists/by-user/{self.owner_data['user_id']}/").json()
+        self.assertEqual((home[0]['title'], home[0]['items']), ('Trip ideas', ''))
+        # An existing list can also be emptied and filled again.
+        r = self.owner.patch(f'/listitem/{list_id}/', {'items': 'Passport|Tickets'}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        r = self.owner.patch(f'/listitem/{list_id}/', {'items': ''}, format='json')
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()['items'], '')
+
+    def test_a_list_still_needs_a_title(self):
+        uid = self.owner_data['user_id']
+        r = self.owner.post('/listitem/', {
+            'title': '', 'items': 'Milk', 'user': uid, 'is_active': True}, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('title', r.json())
+
     def test_delete_is_a_soft_delete_and_keeps_the_data(self):
         list_id = self.make_list()
         r = self.owner.patch(f'/listitem/{list_id}/', {'is_active': False}, format='json')
@@ -404,6 +423,38 @@ class ImageTests(ApiTestCase):
         list_id = self.make_list()
         r = self.upload(self.owner, list_id, name='')
         self.assertEqual(r.status_code, 201, r.content)
+
+    def test_upload_larger_than_the_old_django_default_is_accepted(self):
+        # A resized photo is small, but a normal phone photo can be a few MB. This payload is
+        # about 3 MB of text, above Django's default 2.5 MB limit that used to refuse it.
+        from django.conf import settings
+        self.assertEqual(settings.DATA_UPLOAD_MAX_MEMORY_SIZE, 10 * 1024 * 1024)
+        list_id = self.make_list()
+        big = base64.b64encode(b'\x89PNG' + bytes(2300 * 1024)).decode()
+        payload = json.dumps({
+            'uri': big, 'fileName': 'big', 'mimeType': 'image/png', 'index': 0})
+        self.assertGreater(len(payload), 2.5 * 1024 * 1024)
+        r = self.owner.post('/listitemimages/upload_images/',
+                            {'list_item': list_id, 'images': [payload]}, format='multipart')
+        self.assertEqual(r.status_code, 201, r.content[:200])
+        r = self.anon.get(f'/listitemimages/{list_id}/get_images_for_list_item/')
+        self.assertEqual(len(r.json()['images']), 1)
+
+    @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=2000)
+    def test_upload_over_the_limit_gives_a_clear_message_and_saves_nothing(self):
+        list_id = self.make_list()
+        payload = json.dumps({
+            'uri': 'A' * 5000, 'fileName': 'huge', 'mimeType': 'image/png', 'index': 0})
+        r = self.owner.post('/listitemimages/upload_images/',
+                            {'list_item': list_id, 'images': [payload]}, format='multipart')
+        self.assertEqual(r.status_code, 413)
+        self.assertIn('too large', r.json()['error'])
+        from lista.models import ListItemImage
+        self.assertEqual(ListItemImage.objects.count(), 0)
+        # The same permission rules still apply before the size is looked at.
+        self.assertEqual(self.anon.post('/listitemimages/upload_images/',
+                                        {'list_item': list_id, 'images': [payload]},
+                                        format='multipart').status_code, 401)
 
     def test_update_images_endpoint(self):
         list_id = self.make_list()
