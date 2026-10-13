@@ -56,12 +56,20 @@ class ListItemSerializer(serializers.ModelSerializer):
     - images: Associated images for the list item (optional).
     - items: The list content. May be empty, so a list can be created with a title first
       and filled in later (the title is still required).
+    - picture_rows: Read-only list of the row positions (0 is the first row) that have a
+      picture, so the app can count picture-only rows as items.
 
     extra_kwargs:
     - user: The user field is required.
     - images: The images field is optional.
     - items: An empty value is allowed.
     """
+    picture_rows = serializers.SerializerMethodField()
+
+    def get_picture_rows(self, obj):
+        """Sorted row positions that have a picture (uses prefetched pictures when available)."""
+        return sorted({image.index for image in obj.images.all()})
+
     class Meta:
         """
         Meta class specifying model and fields for the serializer.

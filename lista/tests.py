@@ -678,3 +678,268 @@ class PasswordResetTests(ApiTestCase):
         self.assertEqual(r.status_code, 404)
         r = self.anon.post('/reset_password/', {'email': 'owner@example.com'}, format='json')
         self.assertEqual(r.status_code, 400)
+
+
+# ---------------------------------------------------------------------------
+# Pictures: rows with pictures, all-or-nothing saving, file cleanup
+# ---------------------------------------------------------------------------
+
+def picture_b64(fmt='PNG', size=(12, 8), color=(200, 40, 40)):
+    """A small real picture, base64 encoded, the way the app sends it."""
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new('RGB', size, color).save(buffer, format=fmt)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+class PictureSavingBase(ApiTestCase):
+    def new_picture(self, index, fmt='PNG', name='photo', raw=None, mime=None):
+        return json.dumps({
+            'uri': raw if raw is not None else picture_b64(fmt),
+            'fileName': name,
+            'mimeType': mime or f'image/{fmt.lower()}',
+            'index': index})
+
+    def sync(self, client, list_id, keep=None, new=None):
+        """Send the single 'save the pictures of this list' request, like the app does."""
+        # Old picture files are removed after the save is committed; the test runner never
+        # commits, so run those after-the-save steps explicitly (like a real commit would).
+        with self.captureOnCommitCallbacks(execute=True):
+            return client.post('/listitemimages/sync_images/', {
+                'list_item_id': list_id,
+                'keep': json.dumps(keep or []),
+                'images': new or []}, format='multipart')
+
+    def rows(self, list_id):
+        from lista.models import ListItemImage
+        return {image.index: image for image in ListItemImage.objects.filter(list_item_id=list_id)}
+
+    def file_exists(self, image):
+        from django.core.files.storage import default_storage
+        return default_storage.exists(image.image.name)
+
+
+class PictureRowsFieldTests(PictureSavingBase):
+    def test_lists_report_which_rows_have_a_picture(self):
+        list_id = self.make_list(items='Milk||Eggs')
+        home = self.owner.get(f"/grouplists/by-user/{self.owner_data['user_id']}/").json()
+        self.assertEqual(home[0]['picture_rows'], [])
+        r = self.sync(self.owner, list_id, new=[self.new_picture(2), self.new_picture(1)])
+        self.assertEqual(r.status_code, 200, r.content)
+        home = self.owner.get(f"/grouplists/by-user/{self.owner_data['user_id']}/").json()
+        self.assertEqual(home[0]['picture_rows'], [1, 2])
+        mine = self.owner.get('/listitem/').json()
+        self.assertEqual(mine[0]['picture_rows'], [1, 2])
+
+    def test_picture_rows_cannot_be_written_by_the_app(self):
+        list_id = self.make_list()
+        r = self.owner.patch(f'/listitem/{list_id}/', {'picture_rows': [5]}, format='json')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json()['picture_rows'], [])
+
+
+class SyncImagesTests(PictureSavingBase):
+    def test_add_pictures_to_rows_including_a_row_without_text(self):
+        # Row 1 is a blank row (a spacer or a picture-only row) and must keep its picture.
+        list_id = self.make_list(items='Milk||Eggs')
+        r = self.sync(self.owner, list_id, new=[self.new_picture(0), self.new_picture(1, 'JPEG')])
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(sorted(i['index'] for i in r.json()['images']), [0, 1])
+        rows = self.rows(list_id)
+        self.assertEqual(sorted(rows), [0, 1])
+        self.assertTrue(all(self.file_exists(i) for i in rows.values()))
+        # The picture type is decided by the server from the real file, not by the app.
+        self.assertEqual(rows[0].mime_type, 'image/png')
+        self.assertEqual(rows[1].mime_type, 'image/jpeg')
+        # Stored under a random name, never the name the app sent.
+        self.assertNotIn('photo', rows[0].image.name)
+        listed = self.anon.get(f'/listitemimages/{list_id}/get_images_for_list_item/').json()['images']
+        self.assertEqual(sorted(i['index'] for i in listed), [0, 1])
+
+    def test_replace_a_picture_removes_the_old_one_and_its_file(self):
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        old = self.rows(list_id)[0]
+        old_id, old_path = old.id, old.image.name
+        r = self.sync(self.owner, list_id, keep=[], new=[self.new_picture(0, 'JPEG')])
+        self.assertEqual(r.status_code, 200, r.content)
+        rows = self.rows(list_id)
+        self.assertEqual(list(rows), [0])
+        self.assertNotEqual(rows[0].id, old_id)
+        from django.core.files.storage import default_storage
+        self.assertFalse(default_storage.exists(old_path))
+        self.assertTrue(self.file_exists(rows[0]))
+
+    def test_remove_a_picture(self):
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0), self.new_picture(1)])
+        keep_row = self.rows(list_id)[1]
+        removed_path = self.rows(list_id)[0].image.name
+        r = self.sync(self.owner, list_id, keep=[{'id': keep_row.id, 'index': 1}])
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(list(self.rows(list_id)), [1])
+        from django.core.files.storage import default_storage
+        self.assertFalse(default_storage.exists(removed_path))
+        self.assertTrue(self.file_exists(self.rows(list_id)[1]))
+
+    def test_deleting_a_row_moves_the_later_pictures_with_their_rows(self):
+        list_id = self.make_list(items='A|B|C')
+        self.sync(self.owner, list_id, new=[self.new_picture(0), self.new_picture(1), self.new_picture(2)])
+        before = self.rows(list_id)
+        # The app removed row 0: rows B and C move up to positions 0 and 1; A's picture goes.
+        keep = [{'id': before[1].id, 'index': 0}, {'id': before[2].id, 'index': 1}]
+        r = self.sync(self.owner, list_id, keep=keep)
+        self.assertEqual(r.status_code, 200, r.content)
+        after = self.rows(list_id)
+        self.assertEqual(sorted(after), [0, 1])
+        self.assertEqual(after[0].id, before[1].id)
+        self.assertEqual(after[1].id, before[2].id)
+
+    def test_picture_for_a_row_that_does_not_exist_is_refused(self):
+        list_id = self.make_list(items='Milk|Eggs')
+        r = self.sync(self.owner, list_id, new=[self.new_picture(5)])
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.rows(list_id), {})
+
+    def test_two_pictures_for_the_same_row_are_refused_and_nothing_changes(self):
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        existing = self.rows(list_id)[0]
+        r = self.sync(self.owner, list_id, keep=[{'id': existing.id, 'index': 0}],
+                      new=[self.new_picture(0, 'JPEG')])
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual([i.id for i in self.rows(list_id).values()], [existing.id])
+        self.assertTrue(self.file_exists(existing))
+
+    def test_a_picture_of_another_list_cannot_be_attached(self):
+        mine = self.make_list(title='Mine')
+        other = self.make_list(title='Other')
+        self.sync(self.owner, other, new=[self.new_picture(0)])
+        foreign = self.rows(other)[0]
+        r = self.sync(self.owner, mine, keep=[{'id': foreign.id, 'index': 0}])
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.rows(mine), {})
+        self.assertEqual(list(self.rows(other)), [0])
+        self.assertTrue(self.file_exists(self.rows(other)[0]))
+
+    def test_a_file_that_is_not_a_picture_is_refused_and_the_old_picture_stays(self):
+        list_id = self.make_list(items='Milk|Eggs')
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        old = self.rows(list_id)[0]
+        junk = base64.b64encode(b'this is just text, not a picture').decode()
+        r = self.sync(self.owner, list_id, new=[self.new_picture(0, raw=junk)])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('picture', r.json()['error'].lower())
+        self.assertEqual(self.rows(list_id)[0].id, old.id)
+        self.assertTrue(self.file_exists(old))
+
+    def test_a_picture_that_is_too_big_is_refused_and_the_old_picture_stays(self):
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        old = self.rows(list_id)[0]
+        with mock.patch('lista.views.MAX_PICTURE_BYTES', 10):
+            r = self.sync(self.owner, list_id, new=[self.new_picture(0, 'JPEG')])
+        self.assertEqual(r.status_code, 413)
+        self.assertIn('too large', r.json()['error'])
+        self.assertEqual(self.rows(list_id)[0].id, old.id)
+        self.assertTrue(self.file_exists(old))
+
+    @override_settings(DATA_UPLOAD_MAX_MEMORY_SIZE=500)
+    def test_a_request_over_the_upload_limit_gives_a_clear_message(self):
+        list_id = self.make_list()
+        r = self.sync(self.owner, list_id, new=[self.new_picture(0, raw='A' * 2000)])
+        self.assertEqual(r.status_code, 413)
+        self.assertIn('too large', r.json()['error'])
+
+    def test_a_failure_while_saving_leaves_everything_as_it_was(self):
+        from django.core.files.storage import default_storage
+        list_id = self.make_list(items='A|B')
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        old = self.rows(list_id)[0]
+        real_save = default_storage.save
+        calls = []
+
+        def flaky_save(name, content, *args, **kwargs):
+            calls.append(name)
+            if len(calls) == 2:
+                raise OSError('disk full')
+            return real_save(name, content, *args, **kwargs)
+
+        with mock.patch('lista.views.default_storage.save', side_effect=flaky_save):
+            r = self.sync(self.owner, list_id, keep=[],
+                          new=[self.new_picture(0, 'JPEG'), self.new_picture(1)])
+        self.assertEqual(r.status_code, 500)
+        self.assertIn('error', r.json())
+        # The old picture and its record are untouched, and the first new file was cleaned up.
+        self.assertEqual({i: p.id for i, p in self.rows(list_id).items()}, {0: old.id})
+        self.assertTrue(self.file_exists(old))
+        self.assertFalse(default_storage.exists(calls[0]))
+
+    def test_only_people_who_can_edit_the_list_can_save_pictures(self):
+        list_id = self.make_list()
+        self.assertEqual(self.sync(self.anon, list_id, new=[self.new_picture(0)]).status_code, 401)
+        self.assertEqual(self.sync(self.stranger, list_id, new=[self.new_picture(0)]).status_code, 403)
+        self.share(list_id, self.viewer_data, 'read_only')
+        self.assertEqual(self.sync(self.viewer, list_id, new=[self.new_picture(0)]).status_code, 403)
+        self.assertEqual(self.rows(list_id), {})
+        self.share(list_id, self.editor_data, 'full_access')
+        self.assertEqual(self.sync(self.editor, list_id, new=[self.new_picture(0)]).status_code, 200)
+
+    def test_unknown_list_and_bad_requests_give_clear_errors(self):
+        self.assertEqual(self.sync(self.owner, 99999).status_code, 404)
+        list_id = self.make_list()
+        r = self.owner.post('/listitemimages/sync_images/', {
+            'list_item_id': list_id, 'keep': 'not json'}, format='multipart')
+        self.assertEqual(r.status_code, 400)
+        r = self.owner.post('/listitemimages/sync_images/', {}, format='multipart')
+        self.assertEqual(r.status_code, 400)
+
+    def test_saving_with_no_changes_keeps_everything(self):
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        row = self.rows(list_id)[0]
+        r = self.sync(self.owner, list_id, keep=[{'id': row.id, 'index': 0}])
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(self.rows(list_id)[0].id, row.id)
+        self.assertTrue(self.file_exists(row))
+
+    def test_the_original_picture_endpoints_still_work_for_the_current_app(self):
+        list_id = self.make_list()
+        payload = json.dumps({'uri': PNG_B64, 'fileName': 'old', 'mimeType': 'image/png', 'index': 0})
+        r = self.owner.post('/listitemimages/upload_images/',
+                            {'list_item': list_id, 'images': [payload]}, format='multipart')
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertEqual(list(self.rows(list_id)), [0])
+
+
+class PictureFileCleanupTests(PictureSavingBase):
+    def test_deleting_a_list_for_good_removes_its_picture_files(self):
+        from lista.models import ListItem
+        from django.core.files.storage import default_storage
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        path = self.rows(list_id)[0].image.name
+        self.assertTrue(default_storage.exists(path))
+        with self.captureOnCommitCallbacks(execute=True):
+            self.owner.delete(f'/listitem/{list_id}/')
+        self.assertFalse(ListItem.objects.filter(id=list_id).exists())
+        self.assertFalse(default_storage.exists(path))
+
+    def test_deleting_a_picture_record_removes_its_file(self):
+        from django.core.files.storage import default_storage
+        list_id = self.make_list()
+        self.sync(self.owner, list_id, new=[self.new_picture(0)])
+        image = self.rows(list_id)[0]
+        path = image.image.name
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.owner.delete(f'/listitemimages/{image.id}/')
+        self.assertEqual(r.status_code, 204)
+        self.assertFalse(default_storage.exists(path))
+
+    def test_a_record_with_the_default_placeholder_does_not_break_deleting(self):
+        from lista.models import ListItemImage
+        list_id = self.make_list()
+        ListItemImage.objects.create(list_item_id=list_id, index=0)
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.owner.delete(f'/listitem/{list_id}/')
+        self.assertEqual(r.status_code, 204)

@@ -5,9 +5,13 @@ password-reset emails through Brevo's web API.
 """
 
 # Standard imports
+import io
 import os
 import json
 import base64
+import binascii
+import logging
+import uuid
 import urllib.error
 import urllib.request
 
@@ -24,7 +28,7 @@ from urllib.parse import urlencode
 
 # Django imports
 from django.shortcuts import get_object_or_404
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
@@ -33,6 +37,7 @@ from django.core.exceptions import PermissionDenied, RequestDataTooBig, Validati
 from django.contrib.auth.password_validation import validate_password
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from PIL import Image
 
 # Local imports
 from lista.serializer import (
@@ -469,6 +474,7 @@ class ListItemViewSet(viewsets.ModelViewSet):
         """
         queryset = accessible_lists(self.request.user)
         user_id = self.request.query_params.get('user_id')
+        queryset = queryset.prefetch_related('images')
         return queryset.filter(user_id=user_id) if user_id else queryset
 
     @log(user_id="request.user.id", object_id="list_item.id")
@@ -599,7 +605,7 @@ class GroupListViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         user_id = request.user.id
         group_list = GroupList.objects.filter(models.Q(user_id=user_id))
         list_item_ids = group_list.values_list('list_item_id', flat=True)
-        items = ListItem.objects.filter(id__in=list_item_ids)
+        items = ListItem.objects.filter(id__in=list_item_ids).prefetch_related('images')
         serializer = ListItemSerializer(items, many=True)
         return Response(serializer.data)
 
@@ -645,6 +651,31 @@ class GroupListViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
         print(f"Permission type found: {group_list.permission_type}")
 
         return Response({'permission_type': group_list.permission_type}, status=status.HTTP_200_OK)
+
+logger = logging.getLogger(__name__)
+
+# Limits for pictures saved with sync_images (see ListItemImageViewSet.sync_images).
+MAX_PICTURE_BYTES = 8 * 1024 * 1024        # size of one picture file
+MAX_PICTURE_PIXELS = 40_000_000            # width x height of one picture
+MAX_PICTURES_PER_SAVE = 200
+# What the file really is (checked by reading it), and the type / file ending we store it as.
+ALLOWED_PICTURE_FORMATS = {
+    'JPEG': ('image/jpeg', 'jpeg'),
+    'PNG': ('image/png', 'png'),
+    'WEBP': ('image/webp', 'webp'),
+    'GIF': ('image/gif', 'gif'),
+}
+PICTURE_TOO_LARGE = "The picture is too large. Choose a smaller picture and try again."
+
+
+class PictureProblem(Exception):
+    """A picture request that must be refused, with a message the app can show."""
+
+    def __init__(self, message, status_code=status.HTTP_400_BAD_REQUEST):
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
 
 class ListItemImageViewSet(viewsets.ModelViewSet):
     """
@@ -773,6 +804,152 @@ class ListItemImageViewSet(viewsets.ModelViewSet):
 
         ListItemImage.objects.bulk_create(image_instances)
         return Response({"status": "Images uploaded successfully"}, status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _parse_kept_pictures(raw, current):
+        """Reads the 'keep' list: [{"id": picture id, "index": row}], all from this list."""
+        try:
+            kept = json.loads(raw) if raw else []
+        except (TypeError, ValueError):
+            raise PictureProblem("The list of pictures to keep could not be read.")
+        if not isinstance(kept, list):
+            raise PictureProblem("The list of pictures to keep could not be read.")
+        seen = set()
+        for entry in kept:
+            if (not isinstance(entry, dict) or not isinstance(entry.get('id'), int)
+                    or isinstance(entry.get('id'), bool)
+                    or not isinstance(entry.get('index'), int)
+                    or isinstance(entry.get('index'), bool) or entry['index'] < 0):
+                raise PictureProblem("The list of pictures to keep could not be read.")
+            if entry['id'] not in current or entry['id'] in seen:
+                raise PictureProblem("One of the pictures to keep does not belong to this list.")
+            seen.add(entry['id'])
+        return kept
+
+    @staticmethod
+    def _parse_new_pictures(raw_pictures):
+        """Reads and checks every new picture. Nothing is saved here."""
+        if len(raw_pictures) > MAX_PICTURES_PER_SAVE:
+            raise PictureProblem("Too many pictures were sent at once.")
+        pictures = []
+        for raw in raw_pictures:
+            try:
+                entry = json.loads(raw)
+                uri, index = entry['uri'], entry['index']
+            except (TypeError, ValueError, KeyError):
+                raise PictureProblem("A picture could not be read.")
+            if (not isinstance(uri, str) or not isinstance(index, int)
+                    or isinstance(index, bool) or index < 0):
+                raise PictureProblem("A picture could not be read.")
+            try:
+                data = base64.b64decode(uri, validate=True)
+            except (binascii.Error, ValueError):
+                raise PictureProblem("A picture could not be read.")
+            if len(data) > MAX_PICTURE_BYTES:
+                raise PictureProblem(PICTURE_TOO_LARGE, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+            not_a_picture = "That file isn't a picture we can use. Choose a JPEG or PNG."
+            try:
+                with Image.open(io.BytesIO(data)) as picture:
+                    kind, (width, height) = picture.format, picture.size
+                    picture.verify()
+            except Exception:  # not a picture, damaged, or absurdly large
+                raise PictureProblem(not_a_picture)
+            if kind not in ALLOWED_PICTURE_FORMATS:
+                raise PictureProblem(not_a_picture)
+            if width * height > MAX_PICTURE_PIXELS:
+                raise PictureProblem(PICTURE_TOO_LARGE, status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+            pictures.append({'data': data, 'index': index, 'kind': kind})
+        return pictures
+
+    @log(user_id="request.user.id", object_id="list_item.id")
+    @action(detail=False, methods=['post'], url_path='sync_images')
+    def sync_images(self, request):
+        """
+        Saves all the picture changes of a list in ONE step: all of it happens or none of it.
+
+        The app sends the final picture layout of the list when the user presses Update List:
+        - list_item_id: the list.
+        - keep: JSON list [{"id": <picture id>, "index": <row>}] of the existing pictures that
+          stay (the row is where each one should be after the save).
+        - images: new pictures, each a JSON string {"uri": <base64>, "fileName", "mimeType",
+          "index": <row>} (same format as upload_images; the real type is read from the file).
+        Existing pictures that are not in 'keep' are removed. A replaced picture is simply one
+        that is not kept, plus a new picture for the same row.
+
+        Everything is checked first (permission, that every kept picture belongs to this list,
+        that new files are real pictures within the limits, one picture per row, rows that
+        exist). Records are changed inside one database transaction, and old picture files
+        are deleted only after it succeeds. If anything fails, nothing changes and the old
+        pictures stay.
+
+        Returns 200 with the final pictures, or 400 / 403 / 404 / 413 / 500 with {"error": ...}.
+        """
+        try:
+            list_item_id = request.data.get('list_item_id')
+            keep_raw = request.data.get('keep')
+            new_raw = request.data.getlist('images')
+        except RequestDataTooBig:
+            return Response({"error": PICTURE_TOO_LARGE},
+                            status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+        try:
+            list_item = ListItem.objects.filter(id=int(list_item_id)).first()
+        except (TypeError, ValueError):
+            return Response({"error": "list_item_id is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if list_item is None:
+            return Response({"error": "List item not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not user_can_edit_list(request.user, list_item):
+            return Response({"error": "You do not have permission to edit this list."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        current = {image.id: image for image in ListItemImage.objects.filter(list_item=list_item)}
+        try:
+            kept = self._parse_kept_pictures(keep_raw, current)
+            new_pictures = self._parse_new_pictures(new_raw)
+            rows = max(1, len(list_item.items.split('|')))
+            rows_used = [entry['index'] for entry in kept] + [p['index'] for p in new_pictures]
+            if len(set(rows_used)) != len(rows_used):
+                raise PictureProblem("Each row can have only one picture.")
+            if any(row >= rows for row in rows_used):
+                raise PictureProblem("A picture was sent for a row that does not exist.")
+        except PictureProblem as problem:
+            return Response({"error": problem.message}, status=problem.status_code)
+
+        saved_files = []
+        try:
+            with transaction.atomic():
+                kept_ids = {entry['id'] for entry in kept}
+                for picture_id, picture in current.items():
+                    if picture_id not in kept_ids:
+                        picture.delete()  # its file is removed after the save succeeds
+                for entry in kept:
+                    picture = current[entry['id']]
+                    if picture.index != entry['index']:
+                        picture.index = entry['index']
+                        picture.save(update_fields=['index'])
+                for new_picture in new_pictures:
+                    mime_type, ending = ALLOWED_PICTURE_FORMATS[new_picture['kind']]
+                    path = default_storage.save(
+                        os.path.join('list_item_images', f"{uuid.uuid4().hex}.{ending}"),
+                        ContentFile(new_picture['data']))
+                    saved_files.append(path)
+                    ListItemImage.objects.create(
+                        list_item=list_item, image=path, index=new_picture['index'],
+                        mime_type=mime_type)
+        except Exception:
+            logger.exception("Could not save the pictures of list %s", list_item.id)
+            for path in saved_files:  # files written for this attempt are not wanted any more
+                try:
+                    default_storage.delete(path)
+                except Exception:
+                    logger.exception("Could not clean up picture file %s", path)
+            return Response(
+                {"error": "We couldn't save the pictures. Nothing was changed. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        final = ListItemImage.objects.filter(list_item=list_item).order_by('index')
+        return Response({"images": [
+            {"id": image.id, "url": image.image.url, "index": image.index} for image in final]})
 
     @log(user_id="request.user.id", object_id="list_item.id")
     @action(detail=True, methods=['GET'], url_path='get_images_for_list_item')
