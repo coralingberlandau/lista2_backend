@@ -19,8 +19,15 @@ fields, and auto-generated timestamps.
 """
 
 
+import logging
+
 from django.contrib.auth.models import User
-from django.db import models
+from django.db import models, transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+logger = logging.getLogger(__name__)
+
 class ListItem(models.Model):
     """
     Represents a list item that belongs to a user. Each ListItem can store a title,
@@ -131,6 +138,27 @@ class ListItemImage(models.Model):
             str: A formatted string showing ListItem ID and image name.
         """
         return f"Image for ListItem PK: {self.list_item.pk} - {self.image.name}"
+
+@receiver(post_delete, sender=ListItemImage)
+def remove_picture_file(sender, instance, **kwargs):
+    """
+    Deletes a picture's file from disk when its record is deleted (one picture, a whole
+    list deleted for good, or a picture replaced). The file is removed only after the
+    change has been saved: if the change is rolled back, the file stays.
+    """
+    name = instance.image.name if instance.image else ''
+    if not name or name.startswith('/'):
+        return  # empty, or the default placeholder: there is no stored file to remove
+    storage = instance.image.storage
+
+    def delete_file():
+        try:
+            storage.delete(name)
+        except Exception:  # a missing or locked file must never break the request
+            logger.exception("Could not delete picture file %s", name)
+
+    transaction.on_commit(delete_file)
+
 
 class Customization(models.Model):
     """
