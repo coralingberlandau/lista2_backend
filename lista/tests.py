@@ -531,6 +531,90 @@ class CustomizationAndProfileTests(ApiTestCase):
         self.assertEqual(User.objects.get(id=uid).first_name, 'owner')
 
 
+class RegistrationWithoutNamesTests(ApiTestCase):
+    """
+    The app asks only for a username, an email and a password: first and last name are
+    optional. These tests protect that, and make sure people who do have names are not
+    affected (their names are kept, and older versions of the app that still send them work).
+    """
+
+    def register_without_names(self, name='nameless'):
+        response = self.anon.post('/register/', {
+            'username': name, 'email': f'{name}@example.com', 'password': PASSWORD,
+        }, format='json')
+        self.assertEqual(response.status_code, 201, response.content)
+        return response.json()
+
+    def test_registration_works_without_first_and_last_name(self):
+        data = self.register_without_names()
+        self.assertEqual(data['username'], 'nameless')
+        self.assertTrue(data['access'])
+        self.assertTrue(data['refresh'])
+        user = User.objects.get(username='nameless')
+        self.assertEqual((user.first_name, user.last_name), ('', ''))
+        self.assertFalse(user.is_staff)
+
+    def test_a_user_without_names_can_log_in_see_home_and_edit_the_profile(self):
+        data = self.register_without_names()
+        uid = data['user_id']
+        me = authed(data['access'])
+
+        # Login with the username and password, exactly as the Login screen does.
+        r = self.anon.post('/login/', {'username': 'nameless', 'password': PASSWORD}, format='json')
+        self.assertEqual(r.status_code, 200)
+
+        # The Home screen's request works and starts empty.
+        r = me.get(f'/grouplists/by-user/{uid}/')
+        self.assertEqual((r.status_code, r.json()), (200, []))
+
+        # Edit Profile reads the profile; the names simply come back empty.
+        r = me.get(f'/user/{uid}/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {'username': 'nameless', 'first_name': '',
+                                    'last_name': '', 'email': 'nameless@example.com'})
+
+        # Edit Profile saves only the username and email, and the names stay empty.
+        r = me.patch(f'/user/{uid}/', {'username': 'renamed', 'email': 'renamed@example.com'},
+                     format='json')
+        self.assertEqual(r.status_code, 200)
+        user = User.objects.get(id=uid)
+        self.assertEqual((user.username, user.email), ('renamed', 'renamed@example.com'))
+        self.assertEqual((user.first_name, user.last_name), ('', ''))
+
+        # Other people can still find them by email when sharing a list.
+        r = self.owner.get('/get_user_info/renamed@example.com/')
+        self.assertEqual((r.status_code, r.json()), (200, {'id': uid, 'username': 'renamed'}))
+
+    def test_users_with_names_keep_them_when_the_profile_is_saved_without_names(self):
+        uid = self.owner_data['user_id']  # registered with a first and a last name
+        before = User.objects.get(id=uid)
+        self.assertEqual((before.first_name, before.last_name), ('owner', 'Tester'))
+        r = self.owner.patch(f'/user/{uid}/', {'username': 'owner', 'email': 'owner@example.com'},
+                             format='json')
+        self.assertEqual(r.status_code, 200)
+        after = User.objects.get(id=uid)
+        self.assertEqual((after.first_name, after.last_name), ('owner', 'Tester'))
+        # ...and the profile still returns them.
+        body = self.owner.get(f'/user/{uid}/').json()
+        self.assertEqual((body['first_name'], body['last_name']), ('owner', 'Tester'))
+
+    def test_older_versions_of_the_app_that_still_send_names_are_accepted(self):
+        r = self.anon.post('/register/', {
+            'username': 'oldclient', 'first_name': 'Old', 'last_name': 'Client',
+            'email': 'oldclient@example.com', 'password': PASSWORD}, format='json')
+        self.assertEqual(r.status_code, 201)
+        user = User.objects.get(username='oldclient')
+        self.assertEqual((user.first_name, user.last_name), ('Old', 'Client'))
+
+    def test_registration_still_needs_a_username_an_email_and_a_password(self):
+        base = {'username': 'incomplete', 'email': 'incomplete@example.com', 'password': PASSWORD}
+        for missing in ('username', 'email', 'password'):
+            body = {key: value for key, value in base.items() if key != missing}
+            r = self.anon.post('/register/', body, format='json')
+            self.assertEqual(r.status_code, 400, missing)
+        self.assertFalse(User.objects.filter(username='incomplete').exists())
+
+
 class FakeBrevoResponse:
     """Stands in for the HTTP response of Brevo's send-email API."""
     def __init__(self, status=201):

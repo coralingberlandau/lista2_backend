@@ -24,7 +24,7 @@ The backend provides secure authentication, list and permission management, imag
 background customization and transactional email, all through a REST API.
 
 ![Version](https://img.shields.io/badge/version-2.0.0-blue)
-![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)  
+![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)  
 
 ---
 
@@ -165,7 +165,7 @@ Each part can be redeployed independently.
   If the email cannot be sent, the API says so (`502`) instead of reporting success.
 
 ### 🧪 Quality
-- **44 automated tests** (`lista/tests.py`) cover registration, login and refresh, lists, sharing and permissions, 
+- **73 automated tests** (`lista/tests.py`) cover registration, login and refresh, lists, sharing and permissions, 
   images, backgrounds, profiles, password rules and password reset, and the log-safety guarantees.
 - The tests, the Django system check and the dependency audit all pass.
 
@@ -182,7 +182,7 @@ Each part can be redeployed independently.
 | Security       | JWT Authentication (access + rotating refresh tokens), Django password validators |
 | Email          | **Brevo** web API                                                                 |
 | Logging        | Python Logging Library (with secret redaction)                                    |
-| Code Quality   | Pylint Static Analysis with PEP8 compliance and automatic formatting via autopep8, plus 44 automated tests |
+| Code Quality   | Pylint Static Analysis with PEP8 compliance and automatic formatting via autopep8, plus 73 automated tests |
 | AI Integration | Google Gemini, called by a Netlify function in the frontend project               |
 
 
@@ -242,7 +242,7 @@ AI-powered personalization. See [Future Upgrades](#future-upgrades).
 The screens belong to the frontend; the API supports them as follows.
 
 1. **Sign Up and Login**  
-   - Registration with username, full name, email address, and password (`/register/`).
+   - Registration with just a username, an email address and a password (`/register/`); first and last name are optional.
    - Login for existing users with username and password (`/login/`); sessions renewed with `/token/refresh/`.  
    - Forgot / change password with the emailed link (`/reset_password_request/`, `/reset_password/`).
 
@@ -272,8 +272,7 @@ The screens belong to the frontend; the API supports them as follows.
 Utilizes Django’s built-in `User` model:  
 - **User ID**: Unique identifier.  
 - **Username**: Unique within the system, used for login alongside the password
-- **First Name**: User's given name. 
-- **Last Name:**: User's family name 
+- **First and last name**: optional. The app no longer asks for them, so new accounts have them empty; they are kept for existing accounts and for older app versions that still send them.  
 - **Email**: Unique within the system, used for sharing lists and password recovery.  
 - **Password**: Secure authentication credential (stored hashed; must meet the strength rules).  
 
@@ -411,8 +410,6 @@ All paths are relative to the backend address. Unless marked **public**, send `A
   ```json
   {
     "username": "user1",
-    "first_name": "John",
-    "last_name": "Doe", 
     "email": "user1@example.com",
     "password": "a-strong-password-42"
   }
@@ -421,6 +418,7 @@ All paths are relative to the backend address. Unless marked **public**, send `A
   ```json
   { "Success": "New user created", "username": "user1", "user_id": 1, "access": "...", "refresh": "..." }
   ```
+- **Optional fields:** `first_name` and `last_name` are accepted but not required (older app versions still send them). Only `username`, `email` and `password` are required.  
 - **Errors (400):** missing fields, `Username already exists.`, `Email already in use.`, or the first password-rule problem 
   (for example `This password is too short. It must contain at least 8 characters.`).
 
@@ -453,8 +451,8 @@ All paths are relative to the backend address. Unless marked **public**, send `A
 #### Profile (own only)
 - **URL:** `/user/{user_id}/`  
 - **Methods:** `GET`, `PATCH`  
-- **GET response:** `{ "username": "...", "first_name": "...", "last_name": "...", "email": "..." }`  
-- **PATCH body:** any of `username`, `first_name`, `last_name`, `email` → `{ "message": "Profile updated successfully!" }`  
+- **GET response:** `{ "username": "...", "first_name": "...", "last_name": "...", "email": "..." }` (the two names are empty for accounts created without them)  
+- **PATCH body:** any of `username`, `email`, `first_name`, `last_name` (the app sends only `username` and `email`; names that are not sent stay as they are) → `{ "message": "Profile updated successfully!" }`  
 - **Errors:** `400` (name or email taken, invalid email), `401` (no login), `403` (someone else's profile).
 
 #### Password reset  (public)
@@ -695,7 +693,7 @@ outgoing connections go through an allowlist that includes `api.brevo.com`. Back
 
 ## **Testing**  
 
-The project has **44 automated tests** that call the API exactly as the app does (same URLs, bodies and headers):  
+The project has **73 automated tests** that call the API exactly as the app does (same URLs, bodies and headers):  
 
 ```bash
 python manage.py test lista
@@ -760,7 +758,7 @@ pip-audit -r requirements.txt
    - Seamless data exchange using Axios.  
 
 5. **Quality Assurance (QA)**  
-   - Manual and automated feature testing; in Lista 2, 44 automated tests plus dependency and deployment checks.  
+   - Manual and automated feature testing; in Lista 2, 73 automated tests plus dependency and deployment checks.  
 
 6. **Release and Feedback**  
    - Initial launch followed by user feedback for continuous improvement.  
