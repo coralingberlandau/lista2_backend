@@ -68,10 +68,11 @@ The screens belong to the frontend; the API supports them as follows.
    - Create and manage new lists (`/listitem/`).  
 
 3. **List Creation**  
-   - Add items and images (`/listitemimages/upload_images/`).  
+   - Add items and pictures; the pictures are saved together with the list when the person presses Update List (`/listitemimages/sync_images/`).  
 
 4. **Edit and Share Lists**  
    - Modify list details and tasks.  
+   - Reordering rows, ticking items and deleting an item (a swipe, followed by Undo for 5 seconds) happen on the screen only: nothing is sent to the API until the person presses Update List, so the API did not change for the refreshed app design.  
    - Share lists with additional users and set permissions (`/get_user_info/{email}/`, `/grouplists/`).  
 
 5. **Settings**  
