@@ -12,6 +12,7 @@ Key Features:
 
 Registered Endpoints:
 1. /login/ - Endpoint for token-based authentication login (returns access + refresh tokens).
+   The login field accepts either a username or an email address.
 2. /token/refresh/ - Exchange a refresh token for a new access token.
 3. /register/ - User registration endpoint.
 4. /get_user_info/<email>/ - Look up a user's id by email (used when sharing a list).
