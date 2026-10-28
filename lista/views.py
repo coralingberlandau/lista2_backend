@@ -116,7 +116,10 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Custom serializer for obtaining JWT tokens with additional claims.
     This serializer is customized to include additional claims like 
-    `username` and `user_id` in the generated JWT token.
+    `username` and `user_id` in the generated JWT token, and to let a person
+    log in with either their username or their email address (see `validate`).
+    The token always carries the account's real username, also when an email
+    address was typed.
 
     Note:
     - The `create` and `update` methods are not implemented in this class.
@@ -171,7 +174,10 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class MyTokenObtainPairView(TokenObtainPairView):
     """
-    Custom view for obtaining JWT tokens.
+    Custom view for obtaining JWT tokens (the /login/ endpoint).
+
+    The `username` field of the request accepts a username or an email address;
+    the work is done by `MyTokenObtainPairSerializer`.
     """
     serializer_class = MyTokenObtainPairSerializer
 
