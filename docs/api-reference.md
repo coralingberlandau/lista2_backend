@@ -34,8 +34,9 @@ All paths are relative to the backend address. Unless marked **public**, send `A
     "password": "a-strong-password-42"
   }
   ```
-- **Response (200):** `{ "access": "...", "refresh": "..." }`  
-- **Error (401):** wrong username or password.
+- **The `username` field accepts a username or an email address** (for example `"username": "user1@example.com"`). It is tried as a username first, exactly as before; only if no such username exists is it matched, ignoring capital letters, against the email address of exactly one account. If two accounts share an email address, that address cannot be used to log in (their usernames still work).  
+- **Response (200):** `{ "access": "...", "refresh": "..." }`. The access token always carries the account's real `username` and `user_id`, also when an email address was used to log in.  
+- **Error (401):** wrong username, email address or password. The answer is the same in every case, so it never reveals whether an email address has an account.
 
 #### Renew the session  (public)
 - **URL:** `/token/refresh/`  

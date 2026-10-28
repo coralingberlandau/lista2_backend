@@ -34,4 +34,4 @@ Each part can be redeployed independently.
 | Hosting (API) | **PythonAnywhere** |
 | Email | **Brevo** web API |
 | AI ideas | Google Gemini, called by a Netlify function in the frontend project |
-| Quality | 73 automated tests, `pip-audit`, Pylint and autopep8 (`requirements-dev.txt`) |
+| Quality | 81 automated tests, `pip-audit`, Pylint and autopep8 (`requirements-dev.txt`) |

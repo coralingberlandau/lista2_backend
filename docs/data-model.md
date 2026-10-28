@@ -5,9 +5,9 @@
 ### **Users**  
 Utilizes Django’s built-in `User` model:  
 - **User ID**: Unique identifier.  
-- **Username**: Unique within the system, used for login alongside the password
+- **Username**: Unique within the system, used for login alongside the password (the email address can be used instead of the username)
 - **First and last name**: optional. The app no longer asks for them, so new accounts have them empty; they are kept for existing accounts and for older app versions that still send them.  
-- **Email**: Unique within the system, used for sharing lists and password recovery.  
+- **Email**: Unique within the system, used for sharing lists, password recovery and, instead of the username, for login.  
 - **Password**: Secure authentication credential (stored hashed; must meet the strength rules).  
 
 ### **ListItem**  

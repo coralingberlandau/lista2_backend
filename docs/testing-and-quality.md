@@ -2,13 +2,13 @@
 
 # Testing, Code Quality and Logging
 
-The project has **73 automated tests** that call the API exactly as the app does (same URLs, bodies and headers):  
+The project has **81 automated tests** that call the API exactly as the app does (same URLs, bodies and headers):  
 
 ```bash
 python manage.py test lista
 ```
 
-They cover: registration and its errors, password rules, login and refresh-token rotation, protected endpoints rejecting anonymous users, 
+They cover: registration and its errors, password rules, login with a username or an email address (capital letters, shared emails, wrong passwords) and refresh-token rotation, protected endpoints rejecting anonymous users, 
 creating, updating and deactivating lists, sharing with Read-Only and Full Access, strangers and view-only members being refused, 
 images (upload, public listing, download, permissions), backgrounds, profiles, password reset (missing, wrong, reused and expired tokens, 
 failed email, missing key) and the guarantee that tokens never reach the log file.
@@ -59,7 +59,7 @@ Other checks used before every release: `python manage.py check --deploy`, `pyth
    - Seamless data exchange using Axios.  
 
 5. **Quality Assurance (QA)**  
-   - Manual and automated feature testing; in Lista 2, 73 automated tests plus dependency and deployment checks.  
+   - Manual and automated feature testing; in Lista 2, 81 automated tests plus dependency and deployment checks.  
 
 6. **Release and Feedback**  
    - Initial launch followed by user feedback for continuous improvement.  
