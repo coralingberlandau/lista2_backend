@@ -146,6 +146,28 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         user.save()
         return token
 
+    def validate(self, attrs):
+        """
+        Lets a person log in with either their username or their email address.
+
+        The text typed in the username field is first treated as a username, exactly as
+        before, so nobody's existing login changes. Only when no such username exists, and
+        the text matches the email address of exactly one account (upper and lower case
+        ignored), is the login done as that account. Anything else fails with the same
+        message as always, so the answer never reveals whether an email address has an account.
+        """
+        typed = (attrs.get(self.username_field) or '').strip()
+        attrs[self.username_field] = self._username_for(typed)
+        return super().validate(attrs)
+
+    @staticmethod
+    def _username_for(typed):
+        """The username to log in as for what was typed (the typed text itself if no email matches)."""
+        if not typed or '@' not in typed or User.objects.filter(username=typed).exists():
+            return typed
+        matches = list(User.objects.filter(email__iexact=typed)[:2])
+        return matches[0].username if len(matches) == 1 else typed
+
 
 class MyTokenObtainPairView(TokenObtainPairView):
     """

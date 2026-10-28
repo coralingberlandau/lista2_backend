@@ -20,6 +20,7 @@
 
 ### Tokens
 - `/login/` and `/register/` return an **access token** (valid **25 minutes**) and a **refresh token** (valid **90 days**).  
+- `/login/` accepts a **username or an email address**. A username is always tried first, so no existing login changes; a wrong login gets the same answer either way, so it never shows whether an email address has an account.  
 - Send the access token on every protected request: `Authorization: Bearer <access>`.  
 - `/token/refresh/` exchanges a refresh token for a new access token. Refresh tokens **rotate**: each use returns a new one 
   and the old one is blacklisted.  

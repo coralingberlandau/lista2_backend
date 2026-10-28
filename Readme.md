@@ -15,7 +15,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version">
-  <img src="https://img.shields.io/badge/tests-73%20passing-brightgreen" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-81%20passing-brightgreen" alt="Tests">
   <img src="https://img.shields.io/badge/Django-5.2%20LTS-092E20" alt="Django 5.2 LTS">
   <img src="https://img.shields.io/badge/auth-JWT-6A5BD6" alt="JWT">
 </p>
@@ -58,7 +58,7 @@ Saved together with the list, **all or nothing**, and checked to be real picture
 <td valign="top">
 
 ### 🔐 Accounts
-Sign-up with a username, an email and a password; login; session renewal; private profiles.
+Sign-up with a username, an email and a password; login with a username or an email address; session renewal; private profiles.
 
 </td>
 <td valign="top">
@@ -84,7 +84,7 @@ Each person keeps their own background.
 
 | | Feature | Status | In short |
 |:-:|---|:-:|---|
-| 👤 | **Registration and login (JWT)** | ⬆️ | Now only a username, an email and a password are required |
+| 👤 | **Registration and login (JWT)** | ⬆️ | Now only a username, an email and a password are required, and you can log in with your username or your email address |
 | 🔄 | **Session renewal** | 🆕 | 25-minute access token plus a 90-day rotating refresh token |
 | 🔑 | **Password rules** | 🆕 | Strength rules at sign-up and when resetting |
 | ✉️ | **Password reset by email** | ⬆️ | Now a single-use link that expires after one hour, sent through Brevo (it was SendGrid) |
@@ -97,7 +97,7 @@ Each person keeps their own background.
 | 🛡️ | **Login required by default** | 🆕 | Only sign-up, login, token refresh, password reset and reading a list's pictures are public |
 | 🧾 | **Safe logs** | 🆕 | Tokens, passwords and Authorization headers are redacted |
 | ⚙️ | **Configuration** | 🆕 | Settings and keys come from environment variables; debug is off by default |
-| ✅ | **Automated tests** | 🆕 | 73 tests and a dependency audit before every release |
+| ✅ | **Automated tests** | 🆕 | 81 tests and a dependency audit before every release |
 | ☁️ | **Hosting** | 🔁 | PythonAnywhere with a persistent disk (it was Render's free tier, which needed to be woken up before use) |
 
 More detail, including everything Lista 1 offered, is in the [capabilities guide](docs/features.md).
@@ -112,7 +112,7 @@ Lista 1 already had accounts, lists, sharing, pictures, backgrounds, AI ideas an
 - **Safer pictures:** one all-or-nothing save, real image types only, files cleaned up
 - **Simpler sign-up:** only a username, an email and a password are required
 - **No secrets in the code:** everything comes from environment variables
-- **73 automated tests** and a dependency audit before every release
+- **81 automated tests** and a dependency audit before every release
 
 The [full comparison](docs/features.md#lista-1-compared-with-lista-2) lists every difference.
 
@@ -135,7 +135,7 @@ The [full comparison](docs/features.md#lista-1-compared-with-lista-2) lists ever
 | 🗃️ | [Data model](docs/data-model.md) | Users, lists, sharing, pictures and backgrounds |
 | ⚙️ | [Configuration](docs/configuration.md) | The environment variables |
 | ✉️ | [Email and password reset](docs/email-and-password-reset.md) | How reset links work |
-| 🧪 | [Testing and quality](docs/testing-and-quality.md) | The 73 tests, code quality and logging |
+| 🧪 | [Testing and quality](docs/testing-and-quality.md) | The 81 tests, code quality and logging |
 | 🚀 | [Getting started](docs/getting-started.md) | Run it locally and deploy to PythonAnywhere |
 | 🗺️ | [Roadmap](docs/roadmap.md) | What is planned |
 

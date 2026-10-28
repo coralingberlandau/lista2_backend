@@ -8,7 +8,7 @@
 
 | | Feature | Status | In short |
 |:-:|---|:-:|---|
-| 👤 | **Registration and login (JWT)** | ⬆️ | Now only a username, an email and a password are required |
+| 👤 | **Registration and login (JWT)** | ⬆️ | Now only a username, an email and a password are required, and you can log in with your username or your email address |
 | 🔄 | **Session renewal** | 🆕 | 25-minute access token plus a 90-day rotating refresh token |
 | 🔑 | **Password rules** | 🆕 | Strength rules at sign-up and when resetting |
 | ✉️ | **Password reset by email** | ⬆️ | Now a single-use link that expires after one hour, sent through Brevo (it was SendGrid) |
@@ -21,7 +21,7 @@
 | 🛡️ | **Login required by default** | 🆕 | Only sign-up, login, token refresh, password reset and reading a list's pictures are public |
 | 🧾 | **Safe logs** | 🆕 | Tokens, passwords and Authorization headers are redacted |
 | ⚙️ | **Configuration** | 🆕 | Settings and keys come from environment variables; debug is off by default |
-| ✅ | **Automated tests** | 🆕 | 73 tests and a dependency audit before every release |
+| ✅ | **Automated tests** | 🆕 | 81 tests and a dependency audit before every release |
 | ☁️ | **Hosting** | 🔁 | PythonAnywhere with a persistent disk (it was Render's free tier, which needed to be woken up before use) |
 
 ## Lista 1 compared with Lista 2
@@ -40,7 +40,7 @@ Lista 1 already had accounts, lists, sharing, pictures and backgrounds. Lista 2 
 | **Lists** | Needed items | A list can be just a title. Every list reports which rows have a picture (`picture_rows`) |
 | **Configuration** | Settings in code, debug on | All settings and keys come from environment variables; debug is off by default; no secrets in the repository |
 | **Logs** | Plain logs | Tokens, passwords and `Authorization` headers are redacted |
-| **Quality** | No automated tests | **73 automated tests** and a dependency audit before every release |
+| **Quality** | No automated tests | **81 automated tests** and a dependency audit before every release |
 | **Hosting** | Render's free tier, which had to be woken up before the app could be used | PythonAnywhere with a persistent disk for the database and pictures; the app is not put to sleep after inactivity |
 
 ## What the API does
@@ -60,7 +60,7 @@ The screens belong to the frontend; the API supports them as follows.
 
 1. **Sign Up and Login**  
    - Registration with just a username, an email address and a password (`/register/`); first and last name are optional.
-   - Login for existing users with username and password (`/login/`); sessions renewed with `/token/refresh/`.  
+   - Login with a username **or an email address** and the password (`/login/`); sessions renewed with `/token/refresh/`.  
    - Forgot / change password with the emailed link (`/reset_password_request/`, `/reset_password/`).
 
 2. **List Overview**  

@@ -157,6 +157,83 @@ class AuthTests(ApiTestCase):
         r = self.anon.post('/login/', {'username': 'owner', 'password': 'wrong'}, format='json')
         self.assertEqual(r.status_code, 401)
 
+    def login(self, typed, password=PASSWORD):
+        return self.anon_client().post(
+            '/login/', {'username': typed, 'password': password}, format='json')
+
+    @staticmethod
+    def anon_client():
+        return APIClient()
+
+    @staticmethod
+    def claims(response):
+        return json.loads(base64.urlsafe_b64decode(response.json()['access'].split('.')[1] + '=='))
+
+    def test_login_with_the_email_address_works_like_the_username(self):
+        by_email = self.login('owner@example.com')
+        self.assertEqual(by_email.status_code, 200)
+        self.assertTrue(by_email.json()['access'] and by_email.json()['refresh'])
+        # The login is for the same account, and the token carries the real username.
+        self.assertEqual(self.claims(by_email)['user_id'], self.owner_data['user_id'])
+        self.assertEqual(self.claims(by_email)['username'], 'owner')
+        # Logging in with the username still works exactly as before.
+        by_name = self.login('owner')
+        self.assertEqual(by_name.status_code, 200)
+        self.assertEqual(self.claims(by_name)['user_id'], self.owner_data['user_id'])
+
+    def test_login_with_the_email_ignores_capital_letters_and_spaces_around_it(self):
+        r = self.login('  OWNER@Example.COM ')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.claims(r)['username'], 'owner')
+
+    def test_login_with_the_email_still_needs_the_right_password(self):
+        self.assertEqual(self.login('owner@example.com', 'wrong').status_code, 401)
+        # Somebody else's email with this person's password does not work either.
+        self.assertEqual(self.login('editor@example.com', PASSWORD + 'x').status_code, 401)
+
+    def test_login_with_an_unknown_email_or_username_fails_the_same_way(self):
+        unknown_email = self.login('nobody@example.com')
+        unknown_name = self.login('nobody')
+        wrong_password = self.login('owner@example.com', 'wrong')
+        for r in (unknown_email, unknown_name, wrong_password):
+            self.assertEqual(r.status_code, 401)
+        # Nothing in the answer tells whether an email address has an account.
+        self.assertEqual(unknown_email.json(), wrong_password.json())
+        self.assertEqual(unknown_email.json(), unknown_name.json())
+
+    def test_login_with_an_email_shared_by_two_accounts_is_refused_but_usernames_still_work(self):
+        User.objects.create_user('twin1', 'shared@example.com', PASSWORD)
+        User.objects.create_user('twin2', 'Shared@Example.com', PASSWORD)
+        self.assertEqual(self.login('shared@example.com').status_code, 401)
+        self.assertEqual(self.login('twin1').status_code, 200)
+        self.assertEqual(self.login('twin2').status_code, 200)
+
+    def test_a_username_that_looks_like_an_email_still_logs_in_as_that_username(self):
+        User.objects.create_user('odd@name.com', 'other@example.com', PASSWORD)
+        # The username wins, so nobody's existing login can change.
+        r = self.login('odd@name.com')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.claims(r)['username'], 'odd@name.com')
+        # And that account can also be reached by its real email address.
+        r = self.login('other@example.com')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.claims(r)['username'], 'odd@name.com')
+        # A person's email that equals somebody else's username cannot take that username's login.
+        User.objects.create_user('taken@example.com', 'someone@example.com', PASSWORD)
+        mine = User.objects.get(username='stranger')
+        mine.email = 'taken@example.com'
+        mine.save()
+        self.assertEqual(self.claims(self.login('taken@example.com'))['username'], 'taken@example.com')
+
+    def test_an_inactive_account_cannot_log_in_with_its_email_either(self):
+        User.objects.filter(username='viewer').update(is_active=False)
+        self.assertEqual(self.login('viewer').status_code, 401)
+        self.assertEqual(self.login('viewer@example.com').status_code, 401)
+
+    def test_login_with_an_empty_username_field_is_refused(self):
+        self.assertEqual(self.login('').status_code, 400)
+        self.assertEqual(self.login('   ').status_code, 400)
+
     def test_token_refresh_rotates_and_old_token_stops_working(self):
         login = self.anon.post(
             '/login/', {'username': 'owner', 'password': PASSWORD}, format='json').json()
